@@ -3,11 +3,11 @@ from datetime import datetime
 from time import sleep
 from typing import List, Optional, Union, cast
 
-import docker
-from docker import DockerClient
-from docker.errors import APIError, DockerException, NotFound, ImageNotFound
-from docker.models.images import Image
-from docker.models.volumes import Volume
+import podman
+from podman import PodmanClient
+from podman.errors import APIError, PodmanException, NotFound, ImageNotFound
+from podman.models.images import Image
+from podman.models.volumes import Volume
 from requests import ReadTimeout
 
 from exegol.config.ConstantConfig import ConstantConfig
@@ -36,22 +36,22 @@ class DockerUtils(metaclass=MetaSingleton):
         try:
             # Connect Docker SDK to the local docker instance.
             # Docker connection setting is loaded from the user environment variables.
-            self.__client: DockerClient = docker.from_env()
+            self.__client: PodmanClient = podman.from_env()
             # Check if the docker daemon is serving linux container
             self.__daemon_info = self.__client.info()
             if self.__daemon_info.get("OSType", "linux").lower() != "linux":
                 logger.critical(
-                    f"Docker daemon is not serving linux container ! Docker OS Type is: {self.__daemon_info.get('OSType', 'linux')}")
+                    f"Podman service is not serving linux container ! Podman OS Type is: {self.__daemon_info.get('OSType', 'linux')}")
             EnvInfo.initData(self.__daemon_info)
-        except DockerException as err:
+        except PodmanException as err:
             if 'ConnectionRefusedError' in str(err):
-                logger.critical(f"Unable to connect to docker (from env config). Is docker running on your machine? Exiting.{os.linesep}"
+                logger.critical(f"Unable to connect to docker (from env config). Is podman running on your machine? Exiting.{os.linesep}"
                                 f"    Check documentation for help: https://exegol.readthedocs.io/en/latest/getting-started/faq.html#unable-to-connect-to-docker")
             elif 'FileNotFoundError' in str(err):
-                logger.critical(f"Unable to connect to docker. Is docker installed on your machine? Exiting.{os.linesep}"
+                logger.critical(f"Unable to connect to docker. Is podman installed on your machine? Exiting.{os.linesep}"
                                 f"    Check documentation for help: https://exegol.readthedocs.io/en/latest/getting-started/faq.html#unable-to-connect-to-docker")
             elif 'PermissionError' in str(err):
-                logger.critical(f"Docker is installed on your host but you don't have the permission to interact with it. Exiting.{os.linesep}"
+                logger.critical(f"Podman is installed on your host but you don't have the permission to interact with it. Exiting.{os.linesep}"
                                 f"    Check documentation for help: https://exegol.readthedocs.io/en/latest/getting-started/install.html#optional-run-exegol-with-appropriate-privileges")
             else:
                 logger.error(err)
@@ -101,16 +101,16 @@ class DockerUtils(metaclass=MetaSingleton):
         # Preload docker volume before container creation
         for volume in model.config.getVolumes():
             if volume.get('Type', '?') == "volume":
-                docker_volume = self.__loadDockerVolume(volume_path=volume['Source'], volume_name=volume['Target'])
+                docker_volume = self.__loadPodmanVolume(volume_path=volume['Source'], volume_name=volume['Target'])
                 if docker_volume is None:
-                    logger.warning(f"Error while creating docker volume '{volume['Target']}'")
+                    logger.warning(f"Error while creating podman volume '{volume['Target']}'")
         entrypoint, command = model.config.getEntrypointCommand()
         logger.debug(f"Entrypoint: {entrypoint}")
         logger.debug(f"Cmd: {command}")
         # The 'create' function must be called to create a container without starting it
         # in order to hot patch the entrypoint.sh with wrapper features (the container will be started after postCreateSetup)
         docker_create_function = self.__client.containers.create
-        docker_args = {"image": model.image.getDockerRef(),
+        docker_args = {"image": model.image.getPodmanRef(),
                        "entrypoint": entrypoint,
                        "command": command,
                        "detach": True,
@@ -132,16 +132,16 @@ class DockerUtils(metaclass=MetaSingleton):
                        "working_dir": model.config.getWorkingDir()}
         if temporary:
             # Only the 'run' function support the "remove" parameter
-            docker_create_function = self.__client.containers.run
-            docker_args["remove"] = temporary
-            docker_args["auto_remove"] = temporary
+            podman_create_function = self.__client.containers.run
+            podman_args["remove"] = temporary
+            podman_args["auto_remove"] = temporary
         try:
-            container = docker_create_function(**docker_args)
+            container = podman_create_function(**docker_args)
         except APIError as err:
             message = err.explanation.decode('utf-8').replace('[', '\\[') if type(err.explanation) is bytes else err.explanation
             if message is not None:
                 message = message.replace('[', '\\[')
-                logger.error(f"Docker error received: {message}")
+                logger.error(f"Podman error received: {message}")
             logger.debug(err)
             model.rollback()
             try:
@@ -196,7 +196,7 @@ class DockerUtils(metaclass=MetaSingleton):
 
     # # # Volumes Section # # #
 
-    def __loadDockerVolume(self, volume_path: str, volume_name: str) -> Volume:
+    def __loadPodmanVolume(self, volume_path: str, volume_name: str) -> Volume:
         """Load or create a docker volume for exegol containers
         (must be created before the container, SDK limitation)
         Return the docker volume object"""
@@ -222,8 +222,8 @@ class DockerUtils(metaclass=MetaSingleton):
                     else:
                         raise NotFound('Volume must be reloaded')
                 except ReadTimeout:
-                    logger.error(f"Received a timeout error, Docker is busy... Volume {volume_name} cannot be automatically removed. Please, retry later the following command:{os.linesep}"
-                                 f"    [orange3]docker volume rm {volume_name}[/orange3]")
+                    logger.error(f"Received a timeout error, Podman is busy... Volume {volume_name} cannot be automatically removed. Please, retry later the following command:{os.linesep}"
+                                 f"    [orange3]podman volume rm {volume_name}[/orange3]")
         except NotFound:
             try:
                 # Creating a docker volume bind to a host path
@@ -234,25 +234,25 @@ class DockerUtils(metaclass=MetaSingleton):
                                                                    'device': volume_path,
                                                                    'type': 'none'})
             except APIError as err:
-                logger.error(f"Error while creating docker volume '{volume_name}'.")
+                logger.error(f"Error while creating podman volume '{volume_name}'.")
                 logger.debug(err)
                 logger.critical(err.explanation)
                 return None  # type: ignore
             except ReadTimeout:
-                logger.critical(f"Received a timeout error, Docker is busy... Volume {volume_name} cannot be created.")
+                logger.critical(f"Received a timeout error, Podman is busy... Volume {volume_name} cannot be created.")
                 return  # type: ignore
         except APIError as err:
-            logger.critical(f"Unexpected error by Docker SDK : {err}")
+            logger.critical(f"Unexpected error by Podman SDK : {err}")
             return None  # type: ignore
         except ReadTimeout:
-            logger.critical("Received a timeout error, Docker is busy... Unable to enumerate volume, retry later.")
+            logger.critical("Received a timeout error, Podman is busy... Unable to enumerate volume, retry later.")
             return None  # type: ignore
         return volume
 
     # # # Image Section # # #
 
     def listImages(self, include_version_tag: bool = False, include_locked: bool = False) -> List[ExegolImage]:
-        """List available docker images.
+        """List available podman images.
         Return a list of ExegolImage"""
         if self.__images is None:
             remote_images = self.__listRemoteImages()
@@ -302,7 +302,7 @@ class DockerUtils(metaclass=MetaSingleton):
         try:
             if self.__images is None:
                 try:
-                    docker_local_image = self.__client.images.get(f"{ConstantConfig.IMAGE_NAME}:{tag}")
+                    podman_local_image = self.__client.images.get(f"{ConstantConfig.IMAGE_NAME}:{tag}")
                     # DockerSDK image get is an exact matching, no need to add more check
                 except APIError as err:
                     if err.status_code == 404:
@@ -322,7 +322,7 @@ class DockerUtils(metaclass=MetaSingleton):
                         logger.critical(f"Error on image loading: {err}")
                         return  # type: ignore
                 except ReadTimeout:
-                    logger.critical("Received a timeout error, Docker is busy... Unable to list images, retry later.")
+                    logger.critical("Received a timeout error, Podman is busy... Unable to list images, retry later.")
                     return  # type: ignore
                 return ExegolImage(docker_image=docker_local_image).autoLoad()
             else:
