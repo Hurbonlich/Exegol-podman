@@ -32,12 +32,12 @@ from exegol.utils.WebUtils import WebUtils
 class DockerUtils(metaclass=MetaSingleton):
 
     def __init__(self):
-        """Utility class between exegol and the Docker SDK"""
+        """Utility class between exegol and the Podman SDK"""
         try:
-            # Connect Docker SDK to the local docker instance.
-            # Docker connection setting is loaded from the user environment variables.
+            # Connect Podman SDK to the local podman instance.
+            # Podman connection setting is loaded from the user environment variables.
             self.__client: PodmanClient = podman.from_env()
-            # Check if the docker daemon is serving linux container
+            # Check if the podman client is serving linux container
             self.__daemon_info = self.__client.info()
             if self.__daemon_info.get("OSType", "linux").lower() != "linux":
                 logger.critical(
@@ -68,7 +68,7 @@ class DockerUtils(metaclass=MetaSingleton):
         self.__images = None
 
     def getDockerInfo(self) -> dict:
-        """Fetch info from docker daemon"""
+        """Fetch info from podman daemon"""
         return self.__daemon_info
 
     # # # Container Section # # #
@@ -79,16 +79,16 @@ class DockerUtils(metaclass=MetaSingleton):
         if self.__containers is None:
             self.__containers = []
             try:
-                docker_containers = self.__client.containers.list(all=True, filters={"name": "exegol-"})
+                podman_containers = self.__client.containers.list(all=True, filters={"name": "exegol-"})
             except APIError as err:
                 logger.debug(err)
                 logger.critical(err.explanation)
                 # Not reachable, critical logging will exit
                 return  # type: ignore
             except ReadTimeout:
-                logger.critical("Received a timeout error, Docker is busy... Unable to list containers, retry later.")
+                logger.critical("Received a timeout error, Podman is busy... Unable to list containers, retry later.")
                 return  # type: ignore
-            for container in docker_containers:
+            for container in podman_containers:
                 self.__containers.append(ExegolContainer(container))
         return self.__containers
 
@@ -98,19 +98,19 @@ class DockerUtils(metaclass=MetaSingleton):
         logger.info("Creating new exegol container")
         model.prepare()
         logger.debug(model)
-        # Preload docker volume before container creation
+        # Preload podman volume before container creation
         for volume in model.config.getVolumes():
             if volume.get('Type', '?') == "volume":
-                docker_volume = self.__loadPodmanVolume(volume_path=volume['Source'], volume_name=volume['Target'])
-                if docker_volume is None:
+                podman_volume = self.__loadPodmanVolume(volume_path=volume['Source'], volume_name=volume['Target'])
+                if podman_volume is None:
                     logger.warning(f"Error while creating podman volume '{volume['Target']}'")
         entrypoint, command = model.config.getEntrypointCommand()
         logger.debug(f"Entrypoint: {entrypoint}")
         logger.debug(f"Cmd: {command}")
         # The 'create' function must be called to create a container without starting it
         # in order to hot patch the entrypoint.sh with wrapper features (the container will be started after postCreateSetup)
-        docker_create_function = self.__client.containers.create
-        docker_args = {"image": model.image.getPodmanRef(),
+        podman_create_function = self.__client.containers.create
+        podman_args = {"image": model.image.getPodmanRef(),
                        "entrypoint": entrypoint,
                        "command": command,
                        "detach": True,
@@ -136,7 +136,7 @@ class DockerUtils(metaclass=MetaSingleton):
             podman_args["remove"] = temporary
             podman_args["auto_remove"] = temporary
         try:
-            container = podman_create_function(**docker_args)
+            container = podman_create_function(**podman_args)
         except APIError as err:
             message = err.explanation.decode('utf-8').replace('[', '\\[') if type(err.explanation) is bytes else err.explanation
             if message is not None:
@@ -190,16 +190,16 @@ class DockerUtils(metaclass=MetaSingleton):
                 # When the right container is found, select it and stop the search
                 return ExegolContainer(c)
         # When there is some close container's name,
-        # docker may return some results but none of them correspond to the request.
+        # podman may return some results but none of them correspond to the request.
         # In this case, ObjectNotFound is raised
         raise ObjectNotFound
 
     # # # Volumes Section # # #
 
     def __loadPodmanVolume(self, volume_path: str, volume_name: str) -> Volume:
-        """Load or create a docker volume for exegol containers
+        """Load or create a podman volume for exegol containers
         (must be created before the container, SDK limitation)
-        Return the docker volume object"""
+        Return the podman volume object"""
         try:
             os.makedirs(volume_path, exist_ok=True)
         except PermissionError:
@@ -215,8 +215,8 @@ class DockerUtils(metaclass=MetaSingleton):
                     raise NotFound('Volume must be reloaded')
                 except APIError as e:
                     if e.status_code == 409:
-                        logger.warning("The path of the volume specified by the user is not the same as in the existing docker volume. "
-                                       "The user path will be [red]ignored[/red] as long as the docker volume already exists.")
+                        logger.warning("The path of the volume specified by the user is not the same as in the existing podman volume. "
+                                       "The user path will be [red]ignored[/red] as long as the podman volume already exists.")
                         logger.verbose("The volume is already used by some container and cannot be automatically removed.")
                         logger.debug(e.explanation)
                     else:
@@ -226,9 +226,9 @@ class DockerUtils(metaclass=MetaSingleton):
                                  f"    [orange3]podman volume rm {volume_name}[/orange3]")
         except NotFound:
             try:
-                # Creating a docker volume bind to a host path
-                # Docker volume are more easily shared by container
-                # Docker volume can load data from container image on host's folder creation
+                # Creating a podman volume bind to a host path
+                # Podman volume are more easily shared by container
+                # Podman volume can load data from container image on host's folder creation
                 volume = self.__client.volumes.create(volume_name, driver="local",
                                                       driver_opts={'o': 'bind',
                                                                    'device': volume_path,
@@ -271,7 +271,7 @@ class DockerUtils(metaclass=MetaSingleton):
         return result
 
     def listInstalledImages(self) -> List[ExegolImage]:
-        """List installed docker images.
+        """List installed podman images.
         Return a list of ExegolImage"""
         images = self.listImages()
         # Selecting only installed image
@@ -312,7 +312,7 @@ class DockerUtils(metaclass=MetaSingleton):
                         match = []
                         for img in recovery_images:
                             if ExegolImage.parseAliasTagName(img) == tag:
-                                match.append(ExegolImage(docker_image=img))
+                                match.append(ExegolImage(podman_image=img))
                         if len(match) == 1:
                             return match[0]
                         elif len(match) > 1:
@@ -324,7 +324,7 @@ class DockerUtils(metaclass=MetaSingleton):
                 except ReadTimeout:
                     logger.critical("Received a timeout error, Podman is busy... Unable to list images, retry later.")
                     return  # type: ignore
-                return ExegolImage(docker_image=docker_local_image).autoLoad()
+                return ExegolImage(podman_image=podman_local_image).autoLoad()
             else:
                 for img in self.__images:
                     if img.getName() == tag:
@@ -337,8 +337,8 @@ class DockerUtils(metaclass=MetaSingleton):
         return  # type: ignore
 
     def __listLocalImages(self, tag: Optional[str] = None) -> List[Image]:
-        """List local docker images already installed.
-        Return a list of docker images objects"""
+        """List local podman images already installed.
+        Return a list of podman images objects"""
         logger.debug("Fetching local image tags, digests (and other attributes)")
         try:
             image_name = ConstantConfig.IMAGE_NAME + ("" if tag is None else f":{tag}")
@@ -349,7 +349,7 @@ class DockerUtils(metaclass=MetaSingleton):
             # Not reachable, critical logging will exit
             return  # type: ignore
         except ReadTimeout:
-            logger.critical("Received a timeout error, Docker is busy... Unable to list local images, retry later.")
+            logger.critical("Received a timeout error, Podman is busy... Unable to list local images, retry later.")
             return  # type: ignore
         # Filter out image non-related to the right repository
         result = []
@@ -364,7 +364,7 @@ class DockerUtils(metaclass=MetaSingleton):
         # Try to find lost Exegol images
         recovery_images = self.__findLocalRecoveryImages()
         for img in recovery_images:
-            # Docker can keep track of 2 images maximum with RepoTag or RepoDigests, after it's hard to track origin without labels, so this recovery option is "best effort"
+            # Podman can keep track of 2 images maximum with RepoTag or RepoDigests, after it's hard to track origin without labels, so this recovery option is "best effort"
             if img.id in ids:
                 # Skip image from other repo and image already found
                 logger.debug(f"Duplicate found in recovery mode! {img}")
@@ -375,7 +375,7 @@ class DockerUtils(metaclass=MetaSingleton):
         return result
 
     def __findLocalRecoveryImages(self, include_untag: bool = False) -> List[Image]:
-        """This method try to recovery untagged docker images.
+        """This method try to recovery untagged podman images.
         Set include_untag option to recover images with a valid RepoDigest (no not dangling) but without tag."""
         try:
             # Try to find lost Exegol images
@@ -386,12 +386,12 @@ class DockerUtils(metaclass=MetaSingleton):
             logger.debug(f"Error occurred in recovery mode: {err}")
             return []
         except ReadTimeout:
-            logger.critical("Received a timeout error, Docker is busy... Unable to enumerate lost images, retry later.")
+            logger.critical("Received a timeout error, DPodman is busy... Unable to enumerate lost images, retry later.")
             return  # type: ignore
         result = []
         id_list = set()
         for img in recovery_images:
-            # Docker can keep track of 2 images maximum with RepoTag or RepoDigests, after it's hard to track origin without labels, so this recovery option is "best effort"
+            # Podman can keep track of 2 images maximum with RepoTag or RepoDigests, after it's hard to track origin without labels, so this recovery option is "best effort"
             repo_tags = img.attrs.get('RepoTags')
             repo_digest = img.attrs.get('RepoDigests')
             if repo_tags is not None and len(repo_tags) > 0 or (not include_untag and repo_digest is not None and len(repo_digest) > 0) or img.id in id_list:
@@ -448,15 +448,15 @@ class DockerUtils(metaclass=MetaSingleton):
         except ImageNotFound:
             raise ObjectNotFound
         except ReadTimeout:
-            logger.critical("Received a timeout error, Docker is busy... Unable to find a specific image, retry later.")
+            logger.critical("Received a timeout error, Podman is busy... Unable to find a specific image, retry later.")
             return  # type: ignore
-        remote_image.resetDockerImage()
-        remote_image.setDockerObject(docker_image)
+        remote_image.resetPodmanImage()
+        remote_image.setPodmanObject(podman_image)
 
     def downloadImage(self, image: ExegolImage, install_mode: bool = False) -> bool:
         """Download/pull an ExegolImage"""
         if ParametersManager().offline_mode:
-            logger.critical("It's not possible to download a docker image in offline mode ...")
+            logger.critical("It's not possible to download a podman image in offline mode ...")
             return False
         # Switch to install mode if the selected image is not already installed
         install_mode = install_mode or not image.isInstall()
@@ -467,7 +467,7 @@ class DockerUtils(metaclass=MetaSingleton):
             logger.info(f"Once downloaded and uncompressed, the image will take [cyan1]~{image.getRealSizeRaw()}[/cyan1] on disk :floppy_disk:")
             logger.debug(f"Downloading {ConstantConfig.IMAGE_NAME}:{name} ({image.getArch()})")
             try:
-                ExegolTUI.downloadDockerLayer(
+                ExegolTUI.downloadPodmanLayer(
                     self.__client.api.pull(repository=ConstantConfig.IMAGE_NAME,
                                            tag=name,
                                            stream=True,
@@ -481,20 +481,20 @@ class DockerUtils(metaclass=MetaSingleton):
             except APIError as err:
                 if err.status_code == 500:
                     logger.error(f"Error: {err.explanation}")
-                    logger.error(f"Error while contacting docker registry. Aborting.")
+                    logger.error(f"Error while contacting podman registry. Aborting.")
                 elif err.status_code == 404:
-                    logger.critical(f"The image has not been found on the docker registry: {err.explanation}")
+                    logger.critical(f"The image has not been found on the podman registry: {err.explanation}")
                 else:
                     logger.debug(f"Error: {err}")
                     logger.critical(f"An error occurred while downloading this image: {err.explanation}")
             except ReadTimeout:
-                logger.critical(f"Received a timeout error, Docker is busy... Unable to download {name} image, retry later.")
+                logger.critical(f"Received a timeout error, Podman is busy... Unable to download {name} image, retry later.")
         return False
 
     def downloadVersionTag(self, image: ExegolImage) -> Union[ExegolImage, str]:
-        """Pull a docker image for a specific version tag and return the corresponding ExegolImage"""
+        """Pull a podman image for a specific version tag and return the corresponding ExegolImage"""
         if ParametersManager().offline_mode:
-            logger.critical("It's not possible to download a docker image in offline mode ...")
+            logger.critical("It's not possible to download a podman image in offline mode ...")
             return ""
         try:
             image = self.__client.images.pull(repository=ConstantConfig.IMAGE_NAME,
@@ -510,8 +510,8 @@ class DockerUtils(metaclass=MetaSingleton):
                 logger.debug(f"Error: {err}")
                 return f"en unknown error occurred while downloading this image : {err.explanation}"
         except ReadTimeout:
-            logger.critical(f"Received a timeout error, Docker is busy... Unable to download an image tag, retry later the following command:{os.linesep}"
-                            f"    [orange3]docker pull --platform linux/{image.getArch()} {ConstantConfig.IMAGE_NAME}:{image.getLatestVersionName()}[/orange3].")
+            logger.critical(f"Received a timeout error, Podman is busy... Unable to download an image tag, retry later the following command:{os.linesep}"
+                            f"    [orange3]podman pull --platform linux/{image.getArch()} {ConstantConfig.IMAGE_NAME}:{image.getLatestVersionName()}[/orange3].")
             return  # type: ignore
 
     def removeImage(self, image: ExegolImage, upgrade_mode: bool = False) -> bool:
@@ -522,7 +522,7 @@ class DockerUtils(metaclass=MetaSingleton):
         with console.status(f"Removing {'previous ' if upgrade_mode else ''}image [green]{image.getName()}[/green]...", spinner_style="blue"):
             try:
                 if not image.isVersionSpecific() and image.getInstalledVersionName() != image.getName() and not upgrade_mode:
-                    # Docker can't remove multiple images at the same tag, version specific tag must be remove first
+                    # Podman can't remove multiple images at the same tag, version specific tag must be remove first
                     logger.debug(f"Removing image {image.getFullVersionName()}")
                     if not self.__remove_image(image.getFullVersionName()):
                         logger.critical(f"An error occurred while removing this image : {image.getFullVersionName()}")
@@ -549,15 +549,15 @@ class DockerUtils(metaclass=MetaSingleton):
 
     def __remove_image(self, image_name: str) -> bool:
         """
-        Handle docker image removal with timeout support
-        :param image_name: Name of the docker image to remove
+        Handle podman image removal with timeout support
+        :param image_name: Name of the podman image to remove
         :return: True is removal successful and False otherwise
         """
         try:
             self.__client.images.remove(image_name, force=False, noprune=False)
             return True
         except ReadTimeout:
-            logger.warning("The deletion of the image has timeout. Docker is still processing the removal, please wait.")
+            logger.warning("The deletion of the image has timeout. Podman is still processing the removal, please wait.")
             max_retry = 5
             wait_time = 5
             for i in range(5):
@@ -571,7 +571,7 @@ class DockerUtils(metaclass=MetaSingleton):
                         logger.debug(f"Unexpected error after timeout: {err}")
                 except ReadTimeout:
                     wait_time = wait_time + wait_time * i
-                    logger.info(f"Docker timeout again ({i + 1}/{max_retry}). Next retry in {wait_time} seconds...")
+                    logger.info(f"Podman timeout again ({i + 1}/{max_retry}). Next retry in {wait_time} seconds...")
                     sleep(wait_time)  # Wait x seconds before retry
             logger.error(f"The deletion of the image '{image_name}' has timeout, the deletion may be incomplete.")
         return False
@@ -594,7 +594,7 @@ class DockerUtils(metaclass=MetaSingleton):
             # path is the directory full path where Dockerfile is.
             # tag is the name of the final build
             # dockerfile is the Dockerfile filename
-            ExegolTUI.buildDockerImage(
+            ExegolTUI.buildPodmanImage(
                 self.__client.api.build(path=dockerfile_path,
                                         dockerfile=build_dockerfile,
                                         tag=f"{ConstantConfig.IMAGE_NAME}:{tag}",
