@@ -55,7 +55,7 @@ setup(
         "Operating System :: OS Independent",
     ],
     install_requires=[
-        'docker~=7.1.0',
+        'podman~=5.2.2',
         'requests~=2.32.3',
         'rich~=13.7.1',
         'GitPython~=3.1.43',
