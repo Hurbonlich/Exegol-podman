@@ -1,12 +1,12 @@
 import logging
 
 try:
-    import docker
+    import podman
     import requests
     import git
 
     from exegol.utils.ExeLog import logger, ExeLog, console
-    from exegol.utils.DockerUtils import DockerUtils
+    from exegol.utils.PodmanUtils import PodmanUtils
     from exegol.console.cli.ParametersManager import ParametersManager
     from exegol.console.cli.actions.ExegolParameters import Command
     from exegol.manager.ExegolManager import ExegolManager
@@ -37,7 +37,7 @@ class ExegolController:
         """Dynamically retrieve the main function corresponding to the action selected by the user
         and execute it on the main thread"""
         ExegolManager.print_version()
-        DockerUtils()  # Init dockerutils
+        PodmanUtils()  # Init podmanutils
         ExegolManager.print_debug_banner()
         # Check for missing parameters
         missing_params = cls.__action.check_parameters()
@@ -83,5 +83,5 @@ def main():
         logger.critical(f"A critical error occurred while running this git command: {' '.join(git_error.command)}")
     except Exception:
         print_exception_banner()
-        console.print_exception(show_locals=True, suppress=[docker, requests, git])
+        console.print_exception(show_locals=True, suppress=[podman, requests, git])
         exit(1)
