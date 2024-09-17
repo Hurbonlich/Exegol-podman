@@ -6,12 +6,12 @@ from exegol.config.ConstantConfig import ConstantConfig
 from exegol.config.DataCache import DataCache
 from exegol.config.UserConfig import UserConfig
 from exegol.manager.UpdateManager import UpdateManager
-from exegol.utils.DockerUtils import DockerUtils
+from exegol.utils.PodmanUtils import PodmanUtils
 
 
 def ContainerCompleter(prefix: str, parsed_args: Namespace, **kwargs) -> Tuple[str, ...]:
     """Function to dynamically load a container list for CLI autocompletion purpose"""
-    data = [c.name for c in DockerUtils().listContainers()]
+    data = [c.name for c in PodmanUtils().listContainers()]
     for obj in data:
         # filter data if needed
         if prefix and not obj.lower().startswith(prefix.lower()):
