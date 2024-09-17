@@ -20,7 +20,7 @@ from exegol.model.ExegolContainerTemplate import ExegolContainerTemplate
 from exegol.model.ExegolImage import ExegolImage
 from exegol.model.ExegolModules import ExegolModules
 from exegol.model.SelectableInterface import SelectableInterface
-from exegol.utils.DockerUtils import DockerUtils
+from exegol.utils.PodmanUtils import PodmanUtils
 from exegol.utils.ExeLog import logger, ExeLog
 
 
@@ -52,8 +52,8 @@ class ExegolManager:
         else:
             # Without any parameter, show all images and containers info
             # Fetch data
-            images = DockerUtils().listImages(include_version_tag=False)
-            containers = DockerUtils().listContainers()
+            images = PodmanUtils().listImages(include_version_tag=False)
+            containers = PodmanUtils().listContainers()
             # List and print images
             color = ConsoleFormat.getArchColor(ParametersManager().arch)
             logger.verbose(f"Listing local and remote Exegol images (filtering for architecture [{color}]{ParametersManager().arch}[/{color}])")
@@ -157,7 +157,7 @@ class ExegolManager:
             logger.error("Aborting operation.")
             return
         for img in images:
-            DockerUtils().removeImage(img)
+            PodmanUtils().removeImage(img)
 
     @classmethod
     def remove(cls):
@@ -178,7 +178,7 @@ class ExegolManager:
             c.remove()
             # If the image used is deprecated, it must be deleted after the removal of its container
             if c.image.isLocked() and UserConfig().auto_remove_images:
-                DockerUtils().removeImage(c.image, upgrade_mode=True)
+                PodmanUtils().removeImage(c.image, upgrade_mode=True)
 
     @classmethod
     def print_version(cls):
@@ -207,15 +207,15 @@ class ExegolManager:
         """Print header debug info"""
         logger.debug(f"Pip installation: {boolFormatter(ConstantConfig.pip_installed)}")
         logger.debug(f"Git source installation: {boolFormatter(ConstantConfig.git_source_installation)}")
-        logger.debug(f"Host OS: {EnvInfo.getHostOs().value} [bright_black]({EnvInfo.getDockerEngine().value})[/bright_black]")
+        logger.debug(f"Host OS: {EnvInfo.getHostOs().value} [bright_black]({EnvInfo.getPodmanEngine().value})[/bright_black]")
         logger.debug(f"Arch: {EnvInfo.arch}")
         if EnvInfo.arch != EnvInfo.raw_arch:
             logger.debug(f"Raw arch: {EnvInfo.raw_arch}")
         if EnvInfo.isWindowsHost():
             logger.debug(f"Windows release: {EnvInfo.getWindowsRelease()}")
             logger.debug(f"Python environment: {EnvInfo.current_platform}")
-            logger.debug(f"Docker engine: {EnvInfo.getDockerEngine().value}")
-        logger.debug(f"Docker desktop: {boolFormatter(EnvInfo.isDockerDesktop())}")
+            logger.debug(f"Podman engine: {EnvInfo.getPodmanEngine().value}")
+        logger.debug(f"Podman desktop: {boolFormatter(EnvInfo.isPodmanDesktop())}")
         logger.debug(f"Shell type: {EnvInfo.getShellType().value}")
         if not UpdateManager.isUpdateTag() and UserConfig().auto_check_updates:
             UpdateManager.checkForWrapperUpdate()
@@ -260,9 +260,9 @@ class ExegolManager:
                     if multiple:
                         image_selection = []
                         for image_tag in image_tags:
-                            image_selection.append(DockerUtils().getInstalledImage(image_tag))
+                            image_selection.append(PodmanUtils().getInstalledImage(image_tag))
                     else:
-                        image_selection = DockerUtils().getInstalledImage(image_tag)
+                        image_selection = PodmanUtils().getInstalledImage(image_tag)
             except ObjectNotFound:
                 # ObjectNotFound is raised when the image_tag provided by the user does not match any existing image.
                 if image_tag is not None:
@@ -337,9 +337,9 @@ class ExegolManager:
                     # Check if the selected image is installed and install it
                     logger.warning("The selected image is not installed.")
                     # Download remote image
-                    if DockerUtils().downloadImage(check_img[i], install_mode=True):
+                    if PodmanUtils().downloadImage(check_img[i], install_mode=True):
                         # Select installed image
-                        check_img[i] = DockerUtils().getInstalledImage(check_img[i].getName())
+                        check_img[i] = PodmanUtils().getInstalledImage(check_img[i].getName())
                     else:
                         logger.error("This image cannot be installed.")
                         return False, None
@@ -382,7 +382,7 @@ class ExegolManager:
                     # test each user tag
                     for container_tag in container_tags:
                         try:
-                            cls.__container.append(DockerUtils().getContainer(container_tag))
+                            cls.__container.append(PodmanUtils().getContainer(container_tag))
                         except ObjectNotFound:
                             # on multi select, an object not found is not critical
                             if must_exist:
@@ -394,7 +394,7 @@ class ExegolManager:
                                 raise NotImplemented
                 else:
                     assert container_tag is not None
-                    cls.__container = DockerUtils().getContainer(container_tag)
+                    cls.__container = PodmanUtils().getContainer(container_tag)
         except (ObjectNotFound, IndexError):
             # ObjectNotFound is raised when the container_tag provided by the user does not match any existing container.
             # IndexError is raise when no container exist (raised from TUI interactive selection)
@@ -418,10 +418,10 @@ class ExegolManager:
         # Object listing depending on the type
         if object_type is ExegolContainer:
             # List all images available
-            object_list = DockerUtils().listContainers()
+            object_list = PodmanUtils().listContainers()
         elif object_type is ExegolImage:
             # List all images available
-            object_list = DockerUtils().listInstalledImages() if must_exist else DockerUtils().listImages()
+            object_list = PodmanUtils().listInstalledImages() if must_exist else PodmanUtils().listImages()
         else:
             logger.critical("Unknown object type during interactive selection. Exiting.")
             raise Exception
@@ -522,7 +522,7 @@ class ExegolManager:
             logger.info("To use exegol [orange3]without interaction[/orange3], "
                         "read CLI options with [green]exegol start -h[/green]")
 
-        container = DockerUtils().createContainer(model)
+        container = PodmanUtils().createContainer(model)
         container.postCreateSetup()
         return container
 
@@ -548,7 +548,7 @@ class ExegolManager:
         # Mount entrypoint as a volume (because in tmp mode the container is created with run instead of create method)
         model.config.addVolume(ConstantConfig.entrypoint_context_path_obj, "/.exegol/entrypoint.sh", must_exist=True, read_only=True)
 
-        container = DockerUtils().createContainer(model, temporary=True)
+        container = PodmanUtils().createContainer(model, temporary=True)
         container.postCreateSetup(is_temporary=True)
         return container
 
